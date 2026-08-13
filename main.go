@@ -21,6 +21,11 @@ type CreateBookInput struct {
 	Author string `json:"author"`
 }
 
+type UpdateBookInput struct {
+	Title  *string `json:"title"`
+	Author *string `json:"author"`
+}
+
 var books []Book = []Book{
 	{
 		ID:     1,
@@ -85,6 +90,70 @@ func getBookByIDHandler(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "Request book not found", http.StatusNotFound)
 }
 
+func updateBookHandler(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	idInt, err := strconv.Atoi(id)
+	if err != nil {
+		http.Error(w, "Invalid ID", http.StatusBadRequest)
+		return
+	}
+	if idInt <= 0 {
+		http.Error(w, "Invalid ID", http.StatusBadRequest)
+		return
+	}
+	for index, book := range books {
+		if book.ID == idInt {
+			var input UpdateBookInput
+			decoder := json.NewDecoder(r.Body)
+			decoder.DisallowUnknownFields()
+			err = decoder.Decode(&input)
+			if err != nil {
+				http.Error(w, "Invalid request", http.StatusBadRequest)
+				return
+			}
+			var extra any
+			if err := decoder.Decode(&extra); err != io.EOF {
+				http.Error(w, "Invalid request", http.StatusBadRequest)
+				return
+			}
+
+			if input.Title != nil {
+				trimmed := strings.TrimSpace(*input.Title)
+				if trimmed == "" {
+					http.Error(w, "Invalid values", http.StatusBadRequest)
+					return
+				}
+				*input.Title = trimmed
+			}
+			if input.Author != nil {
+				trimmed := strings.TrimSpace(*input.Author)
+				if trimmed == "" {
+					http.Error(w, "Invalid values", http.StatusBadRequest)
+					return
+				}
+				*input.Author = trimmed
+			}
+			if input.Title == nil && input.Author == nil {
+				http.Error(w, "Invalid request", http.StatusBadRequest)
+				return
+			}
+
+			if input.Title != nil {
+				books[index].Title = *input.Title
+			}
+			if input.Author != nil {
+				books[index].Author = *input.Author
+			}
+
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			json.NewEncoder(w).Encode(books[index])
+			return
+		}
+	}
+	http.Error(w, "Request book not found", http.StatusNotFound)
+}
+
 func createBookHandler(w http.ResponseWriter, r *http.Request) {
 	var input CreateBookInput
 	decoder := json.NewDecoder(r.Body)
@@ -129,6 +198,7 @@ func main() {
 	http.HandleFunc("GET /books", bookHandler)
 	http.HandleFunc("GET /books/{id}", getBookByIDHandler)
 	http.HandleFunc("POST /books", createBookHandler)
+	http.HandleFunc("PATCH /books/{id}", updateBookHandler)
 
 	fmt.Println("Listening on port 8080")
 	err := http.ListenAndServe(":8080", nil)
