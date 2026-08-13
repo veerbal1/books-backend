@@ -154,6 +154,25 @@ func updateBookHandler(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "Request book not found", http.StatusNotFound)
 }
 
+func deleteBookHandler(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	idInt, err := strconv.Atoi(id)
+	if err != nil || idInt <= 0 {
+		http.Error(w, "Invalid ID", http.StatusBadRequest)
+		return
+	}
+
+	for index, book := range books {
+		if book.ID == idInt {
+			books = append(books[:index], books[index+1:]...)
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+	}
+
+	http.Error(w, "Request book not found", http.StatusNotFound)
+}
+
 func createBookHandler(w http.ResponseWriter, r *http.Request) {
 	var input CreateBookInput
 	decoder := json.NewDecoder(r.Body)
@@ -199,6 +218,7 @@ func main() {
 	http.HandleFunc("GET /books/{id}", getBookByIDHandler)
 	http.HandleFunc("POST /books", createBookHandler)
 	http.HandleFunc("PATCH /books/{id}", updateBookHandler)
+	http.HandleFunc("DELETE /books/{id}", deleteBookHandler)
 
 	fmt.Println("Listening on port 8080")
 	err := http.ListenAndServe(":8080", nil)
