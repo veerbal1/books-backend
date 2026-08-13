@@ -26,8 +26,17 @@ type UpdateBookInput struct {
 	Author *string `json:"author"`
 }
 
+type ErrorObject struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
 type ErrorResponse struct {
-	Error string `json:"error"`
+	Error ErrorObject `json:"error"`
+}
+
+type SuccessResponse struct {
+	Data any `json:"data"`
 }
 
 var books []Book = []Book{
@@ -43,10 +52,26 @@ var books []Book = []Book{
 	},
 }
 
+type Pagination struct {
+	Limit   int  `json:"limit"`
+	Offset  int  `json:"offset"`
+	Total   int  `json:"total"`
+	HasMore bool `json:"has_more"`
+}
+
+type ListResponse struct {
+	Data       []Book     `json:"data"`
+	Pagination Pagination `json:"pagination"`
+}
+
 func bookHandler(w http.ResponseWriter, r *http.Request) {
 	author := r.URL.Query().Get("author")
+	r.URL.Query().Get("limit")
+	r.URL.Query().Get("offset")
+
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
+
 	if author != "" {
 		tempBooks := []Book{}
 		for _, book := range books {
@@ -54,61 +79,78 @@ func bookHandler(w http.ResponseWriter, r *http.Request) {
 				tempBooks = append(tempBooks, book)
 			}
 		}
-		json.NewEncoder(w).Encode(tempBooks)
+		res := SuccessResponse{
+			Data: tempBooks,
+		}
+		json.NewEncoder(w).Encode(res)
 		return
 	}
-	json.NewEncoder(w).Encode(books)
+	res := SuccessResponse{
+		Data: books,
+	}
+	json.NewEncoder(w).Encode(res)
 }
 
-func writeJSONError(w http.ResponseWriter, status int, message string) {
+func writeJSONError(w http.ResponseWriter, status int, code string, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(ErrorResponse{Error: message})
+	json.NewEncoder(w).Encode(ErrorResponse{Error: ErrorObject{Code: code, Message: message}})
 }
 
 func healthHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
+	res := SuccessResponse{
+		Data: map[string]string{"status": "ok"},
+	}
+	json.NewEncoder(w).Encode(res)
 }
 
 func welcomeHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{"message": "Welcome to the jungle."})
+	res := SuccessResponse{
+		Data: map[string]string{"message": "Welcome to the jungle."},
+	}
+
+	json.NewEncoder(w).Encode(res)
 }
 
 func getBookByIDHandler(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	idInt, err := strconv.Atoi(id)
 	if err != nil {
-		writeJSONError(w, http.StatusBadRequest, "Invalid ID")
+		writeJSONError(w, http.StatusBadRequest, "invalid_id", "Invalid ID")
 		return
 	}
 	if idInt <= 0 {
-		writeJSONError(w, http.StatusBadRequest, "Invalid ID")
+		writeJSONError(w, http.StatusBadRequest, "invalid_id", "Invalid ID")
 		return
 	}
 	for _, book := range books {
 		if book.ID == idInt {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(book)
+
+			res := SuccessResponse{
+				Data: book,
+			}
+			json.NewEncoder(w).Encode(res)
 			return
 		}
 	}
-	writeJSONError(w, http.StatusNotFound, "Request book not found")
+	writeJSONError(w, http.StatusNotFound, "book_not_found", "Request book not found")
 }
 
 func updateBookHandler(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	idInt, err := strconv.Atoi(id)
 	if err != nil {
-		writeJSONError(w, http.StatusBadRequest, "Invalid ID")
+		writeJSONError(w, http.StatusBadRequest, "invalid_id", "Invalid ID")
 		return
 	}
 	if idInt <= 0 {
-		writeJSONError(w, http.StatusBadRequest, "Invalid ID")
+		writeJSONError(w, http.StatusBadRequest, "invalid_id", "Invalid ID")
 		return
 	}
 	for index, book := range books {
@@ -118,19 +160,19 @@ func updateBookHandler(w http.ResponseWriter, r *http.Request) {
 			decoder.DisallowUnknownFields()
 			err = decoder.Decode(&input)
 			if err != nil {
-				writeJSONError(w, http.StatusBadRequest, "Invalid request")
+				writeJSONError(w, http.StatusBadRequest, "invalid_request", "Invalid request")
 				return
 			}
 			var extra any
 			if err := decoder.Decode(&extra); err != io.EOF {
-				writeJSONError(w, http.StatusBadRequest, "Invalid request")
+				writeJSONError(w, http.StatusBadRequest, "invalid_request", "Invalid request")
 				return
 			}
 
 			if input.Title != nil {
 				trimmed := strings.TrimSpace(*input.Title)
 				if trimmed == "" {
-					writeJSONError(w, http.StatusBadRequest, "Invalid values")
+					writeJSONError(w, http.StatusBadRequest, "invalid_values", "Invalid values")
 					return
 				}
 				*input.Title = trimmed
@@ -138,13 +180,13 @@ func updateBookHandler(w http.ResponseWriter, r *http.Request) {
 			if input.Author != nil {
 				trimmed := strings.TrimSpace(*input.Author)
 				if trimmed == "" {
-					writeJSONError(w, http.StatusBadRequest, "Invalid values")
+					writeJSONError(w, http.StatusBadRequest, "invalid_values", "Invalid values")
 					return
 				}
 				*input.Author = trimmed
 			}
 			if input.Title == nil && input.Author == nil {
-				writeJSONError(w, http.StatusBadRequest, "Invalid request")
+				writeJSONError(w, http.StatusBadRequest, "invalid_request", "Invalid request")
 				return
 			}
 
@@ -157,18 +199,22 @@ func updateBookHandler(w http.ResponseWriter, r *http.Request) {
 
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(books[index])
+
+			res := SuccessResponse{
+				Data: books[index],
+			}
+			json.NewEncoder(w).Encode(res)
 			return
 		}
 	}
-	writeJSONError(w, http.StatusNotFound, "Request book not found")
+	writeJSONError(w, http.StatusNotFound, "book_not_found", "Request book not found")
 }
 
 func deleteBookHandler(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	idInt, err := strconv.Atoi(id)
 	if err != nil || idInt <= 0 {
-		writeJSONError(w, http.StatusBadRequest, "Invalid ID")
+		writeJSONError(w, http.StatusBadRequest, "invalid_id", "Invalid ID")
 		return
 	}
 
@@ -180,7 +226,7 @@ func deleteBookHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	writeJSONError(w, http.StatusNotFound, "Request book not found")
+	writeJSONError(w, http.StatusNotFound, "book_not_found", "Request book not found")
 }
 
 func createBookHandler(w http.ResponseWriter, r *http.Request) {
@@ -189,17 +235,17 @@ func createBookHandler(w http.ResponseWriter, r *http.Request) {
 	decoder.DisallowUnknownFields()
 	err := decoder.Decode(&input)
 	if err != nil {
-		writeJSONError(w, http.StatusBadRequest, "Invalid request")
+		writeJSONError(w, http.StatusBadRequest, "invalid_request", "Invalid request")
 		return
 	}
 	var extra any
 	if err := decoder.Decode(&extra); err != io.EOF {
-		writeJSONError(w, http.StatusBadRequest, "Invalid request")
+		writeJSONError(w, http.StatusBadRequest, "invalid_request", "Invalid request")
 		return
 	}
 
 	if strings.TrimSpace(input.Author) == "" || strings.TrimSpace(input.Title) == "" {
-		writeJSONError(w, http.StatusBadRequest, "Invalid values")
+		writeJSONError(w, http.StatusBadRequest, "invalid_values", "Invalid values")
 		return
 	}
 
@@ -208,7 +254,10 @@ func createBookHandler(w http.ResponseWriter, r *http.Request) {
 	books = append(books, newBook)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(newBook)
+	res := SuccessResponse{
+		Data: newBook,
+	}
+	json.NewEncoder(w).Encode(res)
 }
 
 func nextID(books []Book) int {
@@ -222,16 +271,17 @@ func nextID(books []Book) int {
 }
 
 func main() {
-	http.HandleFunc("GET /health", healthHandler)
-	http.HandleFunc("GET /welcome", welcomeHandler)
-	http.HandleFunc("GET /books", bookHandler)
-	http.HandleFunc("GET /books/{id}", getBookByIDHandler)
-	http.HandleFunc("POST /books", createBookHandler)
-	http.HandleFunc("PATCH /books/{id}", updateBookHandler)
-	http.HandleFunc("DELETE /books/{id}", deleteBookHandler)
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /health", healthHandler)
+	mux.HandleFunc("GET /welcome", welcomeHandler)
+	mux.HandleFunc("GET /books", bookHandler)
+	mux.HandleFunc("GET /books/{id}", getBookByIDHandler)
+	mux.HandleFunc("POST /books", createBookHandler)
+	mux.HandleFunc("PATCH /books/{id}", updateBookHandler)
+	mux.HandleFunc("DELETE /books/{id}", deleteBookHandler)
 
 	fmt.Println("Listening on port 8080")
-	err := http.ListenAndServe(":8080", nil)
+	err := http.ListenAndServe(":8080", mux)
 	if err != nil {
 		log.Fatal(err)
 	}
