@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -64,30 +65,146 @@ type ListResponse struct {
 	Pagination Pagination `json:"pagination"`
 }
 
+func parsePagination(r *http.Request) (int, int, error) {
+	limit := 10
+	offset := 0
+
+	limitText := r.URL.Query().Get("limit")
+	if limitText != "" {
+		parsedLimit, err := strconv.Atoi(limitText)
+		if err != nil || parsedLimit < 1 || parsedLimit > 100 {
+			return 0, 0, fmt.Errorf("invalid limit")
+		}
+		limit = parsedLimit
+	}
+
+	offsetText := r.URL.Query().Get("offset")
+	if offsetText != "" {
+		parsedOffset, err := strconv.Atoi(offsetText)
+		if err != nil || parsedOffset < 0 {
+			return 0, 0, fmt.Errorf("invalid offset")
+		}
+		offset = parsedOffset
+	}
+
+	return limit, offset, nil
+}
+
+func parseSort(r *http.Request) (string, string, error) {
+	sortField := r.URL.Query().Get("sort")
+	order := r.URL.Query().Get("order")
+
+	if sortField == "" {
+		sortField = "id"
+	}
+	if order == "" {
+		order = "asc"
+	}
+
+	if sortField != "id" && sortField != "title" && sortField != "author" {
+		return "", "", fmt.Errorf("invalid sort field")
+	}
+
+	if order != "asc" && order != "desc" {
+		return "", "", fmt.Errorf("invalid sort order")
+	}
+
+	return sortField, order, nil
+}
+
 func bookHandler(w http.ResponseWriter, r *http.Request) {
 	author := r.URL.Query().Get("author")
-	r.URL.Query().Get("limit")
-	r.URL.Query().Get("offset")
+	title := r.URL.Query().Get("title")
+	limit, offset, err := parsePagination(r)
+
+	if err != nil {
+		writeJSONError(
+			w,
+			http.StatusBadRequest,
+			"invalid_request",
+			"Invalid pagination",
+		)
+		return
+	}
+
+	sortField, order, err := parseSort(r)
+	if err != nil {
+		writeJSONError(
+			w,
+			http.StatusBadRequest,
+			"invalid_request",
+			"Invalid sorting",
+		)
+		return
+	}
+
+	result := []Book{}
+	for _, book := range books {
+		matchesAuthor := author == "" || strings.EqualFold(book.Author, author)
+		matchesTitle := title == "" ||
+			strings.Contains(strings.ToLower(book.Title), strings.ToLower(title))
+		if matchesAuthor && matchesTitle {
+			result = append(result, book)
+		}
+	}
+
+	sort.Slice(result, func(i, j int) bool {
+		left := result[i]
+		right := result[j]
+
+		if sortField == "id" {
+			if order == "asc" {
+				return left.ID < right.ID
+			}
+			return left.ID > right.ID
+		}
+
+		leftValue := left.Title
+		rightValue := right.Title
+
+		if sortField == "author" {
+			leftValue = left.Author
+			rightValue = right.Author
+		}
+
+		leftValue = strings.ToLower(leftValue)
+		rightValue = strings.ToLower(rightValue)
+
+		if leftValue == rightValue {
+			return left.ID < right.ID
+		}
+
+		if order == "asc" {
+			return leftValue < rightValue
+		}
+		return leftValue > rightValue
+	})
+
+	total := len(result)
+
+	page := []Book{}
+	if offset < total {
+		end := offset + limit
+		if end > total {
+			end = total
+		}
+		page = result[offset:end]
+	}
+
+	hasMore := offset+len(page) < total
+
+	res := ListResponse{
+		Data: page,
+		Pagination: Pagination{
+			Limit:   limit,
+			Offset:  offset,
+			Total:   total,
+			HasMore: hasMore,
+		},
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-
-	if author != "" {
-		tempBooks := []Book{}
-		for _, book := range books {
-			if author == book.Author {
-				tempBooks = append(tempBooks, book)
-			}
-		}
-		res := SuccessResponse{
-			Data: tempBooks,
-		}
-		json.NewEncoder(w).Encode(res)
-		return
-	}
-	res := SuccessResponse{
-		Data: books,
-	}
 	json.NewEncoder(w).Encode(res)
 }
 
