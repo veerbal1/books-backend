@@ -2,9 +2,11 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
+	"mime"
 	"net/http"
 	"sort"
 	"strconv"
@@ -53,6 +55,8 @@ var books []Book = []Book{
 	},
 }
 
+const maxRequestBodySize = 64 << 10
+
 type Pagination struct {
 	Limit   int  `json:"limit"`
 	Offset  int  `json:"offset"`
@@ -63,6 +67,15 @@ type Pagination struct {
 type ListResponse struct {
 	Data       []Book     `json:"data"`
 	Pagination Pagination `json:"pagination"`
+}
+
+func limitRequestBody(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodySize)
+}
+
+func isBodyTooLarge(err error) bool {
+	var maxBytesError *http.MaxBytesError
+	return errors.As(err, &maxBytesError)
 }
 
 func parsePagination(r *http.Request) (int, int, error) {
@@ -260,6 +273,18 @@ func getBookByIDHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func updateBookHandler(w http.ResponseWriter, r *http.Request) {
+	if !isJSONContentType(r) {
+		writeJSONError(
+			w,
+			http.StatusUnsupportedMediaType,
+			"unsupported_media_type",
+			"Content-Type must be application/json",
+		)
+		return
+	}
+
+	limitRequestBody(w, r)
+
 	id := r.PathValue("id")
 	idInt, err := strconv.Atoi(id)
 	if err != nil {
@@ -277,6 +302,15 @@ func updateBookHandler(w http.ResponseWriter, r *http.Request) {
 			decoder.DisallowUnknownFields()
 			err = decoder.Decode(&input)
 			if err != nil {
+				if isBodyTooLarge(err) {
+					writeJSONError(
+						w,
+						http.StatusRequestEntityTooLarge,
+						"body_too_large",
+						"Request body is too large",
+					)
+					return
+				}
 				writeJSONError(w, http.StatusBadRequest, "invalid_request", "Invalid request")
 				return
 			}
@@ -346,12 +380,42 @@ func deleteBookHandler(w http.ResponseWriter, r *http.Request) {
 	writeJSONError(w, http.StatusNotFound, "book_not_found", "Request book not found")
 }
 
+func isJSONContentType(r *http.Request) bool {
+	contentType := r.Header.Get("Content-Type")
+	mediaType, _, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		return false
+	}
+
+	return mediaType == "application/json"
+}
+
 func createBookHandler(w http.ResponseWriter, r *http.Request) {
+	if !isJSONContentType(r) {
+		writeJSONError(
+			w,
+			http.StatusUnsupportedMediaType,
+			"unsupported_media_type",
+			"Content-Type must be application/json",
+		)
+		return
+	}
+	limitRequestBody(w, r)
+
 	var input CreateBookInput
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	err := decoder.Decode(&input)
 	if err != nil {
+		if isBodyTooLarge(err) {
+			writeJSONError(
+				w,
+				http.StatusRequestEntityTooLarge,
+				"body_too_large",
+				"Request body is too large",
+			)
+			return
+		}
 		writeJSONError(w, http.StatusBadRequest, "invalid_request", "Invalid request")
 		return
 	}
