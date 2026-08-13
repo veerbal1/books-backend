@@ -26,6 +26,10 @@ type UpdateBookInput struct {
 	Author *string `json:"author"`
 }
 
+type ErrorResponse struct {
+	Error string `json:"error"`
+}
+
 var books []Book = []Book{
 	{
 		ID:     1,
@@ -56,6 +60,12 @@ func bookHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(books)
 }
 
+func writeJSONError(w http.ResponseWriter, status int, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(ErrorResponse{Error: message})
+}
+
 func healthHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
@@ -72,11 +82,11 @@ func getBookByIDHandler(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	idInt, err := strconv.Atoi(id)
 	if err != nil {
-		http.Error(w, "Invalid ID", http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "Invalid ID")
 		return
 	}
 	if idInt <= 0 {
-		http.Error(w, "Invalid ID", http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "Invalid ID")
 		return
 	}
 	for _, book := range books {
@@ -87,18 +97,18 @@ func getBookByIDHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	http.Error(w, "Request book not found", http.StatusNotFound)
+	writeJSONError(w, http.StatusNotFound, "Request book not found")
 }
 
 func updateBookHandler(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	idInt, err := strconv.Atoi(id)
 	if err != nil {
-		http.Error(w, "Invalid ID", http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "Invalid ID")
 		return
 	}
 	if idInt <= 0 {
-		http.Error(w, "Invalid ID", http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "Invalid ID")
 		return
 	}
 	for index, book := range books {
@@ -108,19 +118,19 @@ func updateBookHandler(w http.ResponseWriter, r *http.Request) {
 			decoder.DisallowUnknownFields()
 			err = decoder.Decode(&input)
 			if err != nil {
-				http.Error(w, "Invalid request", http.StatusBadRequest)
+				writeJSONError(w, http.StatusBadRequest, "Invalid request")
 				return
 			}
 			var extra any
 			if err := decoder.Decode(&extra); err != io.EOF {
-				http.Error(w, "Invalid request", http.StatusBadRequest)
+				writeJSONError(w, http.StatusBadRequest, "Invalid request")
 				return
 			}
 
 			if input.Title != nil {
 				trimmed := strings.TrimSpace(*input.Title)
 				if trimmed == "" {
-					http.Error(w, "Invalid values", http.StatusBadRequest)
+					writeJSONError(w, http.StatusBadRequest, "Invalid values")
 					return
 				}
 				*input.Title = trimmed
@@ -128,13 +138,13 @@ func updateBookHandler(w http.ResponseWriter, r *http.Request) {
 			if input.Author != nil {
 				trimmed := strings.TrimSpace(*input.Author)
 				if trimmed == "" {
-					http.Error(w, "Invalid values", http.StatusBadRequest)
+					writeJSONError(w, http.StatusBadRequest, "Invalid values")
 					return
 				}
 				*input.Author = trimmed
 			}
 			if input.Title == nil && input.Author == nil {
-				http.Error(w, "Invalid request", http.StatusBadRequest)
+				writeJSONError(w, http.StatusBadRequest, "Invalid request")
 				return
 			}
 
@@ -151,14 +161,14 @@ func updateBookHandler(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	http.Error(w, "Request book not found", http.StatusNotFound)
+	writeJSONError(w, http.StatusNotFound, "Request book not found")
 }
 
 func deleteBookHandler(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	idInt, err := strconv.Atoi(id)
 	if err != nil || idInt <= 0 {
-		http.Error(w, "Invalid ID", http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "Invalid ID")
 		return
 	}
 
@@ -170,7 +180,7 @@ func deleteBookHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	http.Error(w, "Request book not found", http.StatusNotFound)
+	writeJSONError(w, http.StatusNotFound, "Request book not found")
 }
 
 func createBookHandler(w http.ResponseWriter, r *http.Request) {
@@ -179,17 +189,17 @@ func createBookHandler(w http.ResponseWriter, r *http.Request) {
 	decoder.DisallowUnknownFields()
 	err := decoder.Decode(&input)
 	if err != nil {
-		http.Error(w, "Invalid request", http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "Invalid request")
 		return
 	}
 	var extra any
 	if err := decoder.Decode(&extra); err != io.EOF {
-		http.Error(w, "Invalid request", http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "Invalid request")
 		return
 	}
 
 	if strings.TrimSpace(input.Author) == "" || strings.TrimSpace(input.Title) == "" {
-		http.Error(w, "Invalid values", http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "Invalid values")
 		return
 	}
 
