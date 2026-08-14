@@ -42,18 +42,22 @@ type SuccessResponse struct {
 	Data any `json:"data"`
 }
 
-var books []Book = []Book{
-	{
-		ID:     1,
-		Title:  "Rich Dad, Poor Dad",
-		Author: "Japanese",
-	},
-	{
-		ID:     2,
-		Title:  "Harry Potter",
-		Author: "American",
-	},
+func seedBooks() []Book {
+	return []Book{
+		{
+			ID:     1,
+			Title:  "Rich Dad, Poor Dad",
+			Author: "Japanese",
+		},
+		{
+			ID:     2,
+			Title:  "Harry Potter",
+			Author: "American",
+		},
+	}
 }
+
+var books []Book = seedBooks()
 
 const maxRequestBodySize = 64 << 10
 
@@ -451,7 +455,7 @@ func nextID(books []Book) int {
 	return maxID + 1
 }
 
-func main() {
+func newMux() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", healthHandler)
 	mux.HandleFunc("GET /welcome", welcomeHandler)
@@ -460,6 +464,11 @@ func main() {
 	mux.HandleFunc("POST /books", createBookHandler)
 	mux.HandleFunc("PATCH /books/{id}", updateBookHandler)
 	mux.HandleFunc("DELETE /books/{id}", deleteBookHandler)
+	return mux
+}
+
+func main() {
+	mux := newMux()
 
 	fmt.Println("Listening on port 8080")
 	err := http.ListenAndServe(":8080", mux)
