@@ -1,0 +1,405 @@
+# AI Generated
+openapi: 3.1.0
+
+info:
+  title: Book API
+  version: 1.0.0
+  description: |
+    An in-memory Book CRUD API. Data resets when the server restarts.
+    JSON body endpoints require application/json (parameters such as charset=utf-8 are accepted)
+    and limit request bodies to 64 KiB.
+
+servers:
+  - url: http://localhost:8080
+    description: Local development server
+
+paths:
+  /health:
+    get:
+      summary: Check API health
+      responses:
+        "200":
+          $ref: "#/components/responses/HealthOK"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+
+  /welcome:
+    get:
+      summary: Get the welcome message
+      responses:
+        "200":
+          $ref: "#/components/responses/WelcomeOK"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+
+  /books:
+    get:
+      summary: List books
+      description: |
+        Filters first, then sorts matching books, then applies pagination.
+        Author matching is case-insensitive and exact. Title matching is case-insensitive and partial.
+      parameters:
+        - $ref: "#/components/parameters/AuthorFilter"
+        - $ref: "#/components/parameters/TitleFilter"
+        - $ref: "#/components/parameters/SortField"
+        - $ref: "#/components/parameters/SortOrder"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/Offset"
+      responses:
+        "200":
+          $ref: "#/components/responses/BookListOK"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+
+    post:
+      summary: Create a book
+      description: The request body must be JSON and must not exceed 64 KiB.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateBookInput"
+      responses:
+        "201":
+          $ref: "#/components/responses/BookCreated"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "413":
+          $ref: "#/components/responses/BodyTooLarge"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+
+  /books/{id}:
+    get:
+      summary: Get a book by ID
+      parameters:
+        - $ref: "#/components/parameters/BookID"
+      responses:
+        "200":
+          $ref: "#/components/responses/BookOK"
+        "400":
+          $ref: "#/components/responses/InvalidID"
+        "404":
+          $ref: "#/components/responses/BookNotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+
+    patch:
+      summary: Partially update a book
+      description: The request body must be JSON, contain at least one updateable field, and must not exceed 64 KiB.
+      parameters:
+        - $ref: "#/components/parameters/BookID"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateBookInput"
+      responses:
+        "200":
+          $ref: "#/components/responses/BookOK"
+        "400":
+          $ref: "#/components/responses/InvalidRequest"
+        "404":
+          $ref: "#/components/responses/BookNotFound"
+        "413":
+          $ref: "#/components/responses/BodyTooLarge"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+
+    delete:
+      summary: Delete a book
+      parameters:
+        - $ref: "#/components/parameters/BookID"
+      responses:
+        "204":
+          description: Book deleted successfully. This response has no body.
+        "400":
+          $ref: "#/components/responses/InvalidID"
+        "404":
+          $ref: "#/components/responses/BookNotFound"
+        "405":
+          $ref: "#/components/responses/MethodNotAllowed"
+
+components:
+  parameters:
+    BookID:
+      name: id
+      in: path
+      required: true
+      description: A positive integer book ID.
+      schema:
+        type: integer
+        minimum: 1
+
+    AuthorFilter:
+      name: author
+      in: query
+      required: false
+      description: Case-insensitive exact author match.
+      schema:
+        type: string
+
+    TitleFilter:
+      name: title
+      in: query
+      required: false
+      description: Case-insensitive partial title match.
+      schema:
+        type: string
+
+    SortField:
+      name: sort
+      in: query
+      required: false
+      description: Field used to order matching books.
+      schema:
+        type: string
+        enum: [id, title, author]
+        default: id
+
+    SortOrder:
+      name: order
+      in: query
+      required: false
+      description: Sort direction.
+      schema:
+        type: string
+        enum: [asc, desc]
+        default: asc
+
+    Limit:
+      name: limit
+      in: query
+      required: false
+      description: Maximum number of matching books returned.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 10
+
+    Offset:
+      name: offset
+      in: query
+      required: false
+      description: Number of matching books to skip before the page starts.
+      schema:
+        type: integer
+        minimum: 0
+        default: 0
+
+  schemas:
+    Book:
+      type: object
+      required: [id, title, author]
+      properties:
+        id:
+          type: integer
+          minimum: 1
+          example: 1
+        title:
+          type: string
+          example: Rich Dad, Poor Dad
+        author:
+          type: string
+          example: Japanese
+
+    CreateBookInput:
+      type: object
+      additionalProperties: false
+      required: [title, author]
+      properties:
+        title:
+          type: string
+          minLength: 1
+          description: Required; whitespace-only values are rejected.
+          example: Learning Go
+        author:
+          type: string
+          minLength: 1
+          description: Required; whitespace-only values are rejected.
+          example: Jon Bodner
+
+    UpdateBookInput:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        title:
+          type: string
+          minLength: 1
+          description: Whitespace-only values are rejected.
+          example: Learning Go, Second Edition
+        author:
+          type: string
+          minLength: 1
+          description: Whitespace-only values are rejected.
+          example: Jon Bodner
+
+    ErrorObject:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          example: invalid_request
+        message:
+          type: string
+          example: Invalid request
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          $ref: "#/components/schemas/ErrorObject"
+
+    Pagination:
+      type: object
+      required: [limit, offset, total, has_more]
+      properties:
+        limit:
+          type: integer
+          example: 10
+        offset:
+          type: integer
+          example: 0
+        total:
+          type: integer
+          example: 2
+        has_more:
+          type: boolean
+          example: false
+
+    BookResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          $ref: "#/components/schemas/Book"
+
+    BookListResponse:
+      type: object
+      required: [data, pagination]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: "#/components/schemas/Book"
+        pagination:
+          $ref: "#/components/schemas/Pagination"
+
+    HealthResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [status]
+          properties:
+            status:
+              type: string
+              example: ok
+
+    WelcomeResponse:
+      type: object
+      required: [data]
+      properties:
+        data:
+          type: object
+          required: [message]
+          properties:
+            message:
+              type: string
+              example: Welcome to the jungle.
+
+  responses:
+    HealthOK:
+      description: API is running.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/HealthResponse"
+
+    WelcomeOK:
+      description: Welcome message returned.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/WelcomeResponse"
+
+    BookListOK:
+      description: Matching books returned in the requested page.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/BookListResponse"
+
+    BookOK:
+      description: Book returned successfully.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/BookResponse"
+
+    BookCreated:
+      description: Book created successfully.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/BookResponse"
+
+    InvalidRequest:
+      description: Request JSON, validation, pagination, or sorting input is invalid.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+    InvalidID:
+      description: Book ID is missing, malformed, zero, or negative.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+    BookNotFound:
+      description: No book exists with the requested ID.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+    BodyTooLarge:
+      description: Request body exceeds the 64 KiB limit.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+    UnsupportedMediaType:
+      description: POST and PATCH request bodies must use application/json.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+    MethodNotAllowed:
+      description: Method is not supported for this path. The standard-library router returns this response as plain text.
+      headers:
+        Allow:
+          description: Methods supported by the path.
+          schema:
+            type: string
+      content:
+        text/plain:
+          schema:
+            type: string
