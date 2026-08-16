@@ -1,6 +1,8 @@
 package main
 
 import (
+	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -8,9 +10,14 @@ import (
 	"log"
 	"mime"
 	"net/http"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
+
+	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/joho/godotenv"
 )
 
 type Book struct {
@@ -468,10 +475,33 @@ func newMux() *http.ServeMux {
 }
 
 func main() {
+	godotenv.Load()
+	dbURL := os.Getenv("DATABASE_URL")
+	if dbURL == "" {
+		log.Fatal("DATABASE_URL is required")
+	}
+
+	db, err := sql.Open("pgx", dbURL)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer db.Close()
+	db.SetMaxOpenConns(10)
+	db.SetMaxIdleConns(5)
+	db.SetConnMaxIdleTime(5 * time.Minute)
+
+	pingCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	pingErr := db.PingContext(pingCtx)
+	cancel()
+
+	if pingErr != nil {
+		log.Fatal(pingErr)
+	}
+
 	mux := newMux()
 
 	fmt.Println("Listening on port 8080")
-	err := http.ListenAndServe(":8080", mux)
+	err = http.ListenAndServe(":8080", mux)
 	if err != nil {
 		log.Fatal(err)
 	}
