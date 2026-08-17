@@ -1,11 +1,25 @@
 package main
 
 import (
+	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 )
+
+type fakeBookStore struct {
+	book Book
+	err  error
+}
+
+func (f fakeBookStore) GetBookByID(
+	ctx context.Context,
+	id int64,
+) (Book, error) {
+	return f.book, f.err
+}
 
 func resetBooks(t *testing.T) {
 	t.Helper()
@@ -26,7 +40,7 @@ func TestNextID(t *testing.T) {
 	cases := []struct {
 		name  string
 		books []Book
-		want  int
+		want  int64
 	}{{
 		name:  "highest ID plus one",
 		books: books,
@@ -71,7 +85,7 @@ func TestGetBookInvalidID(t *testing.T) {
 		},
 	}
 
-	mux := newMux()
+	mux := newMux(fakeBookStore{})
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodGet, tc.path, nil)
@@ -103,7 +117,7 @@ func TestHealthHandler(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/health", nil)
 	rec := httptest.NewRecorder()
 
-	mux := newMux()
+	mux := newMux(fakeBookStore{})
 	mux.ServeHTTP(rec, req)
 
 	code := rec.Code
@@ -136,7 +150,7 @@ func TestGetMissingBook(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/books/999", nil)
 	rec := httptest.NewRecorder()
 
-	mux := newMux()
+	mux := newMux(fakeBookStore{err: sql.ErrNoRows})
 	mux.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusNotFound {

@@ -21,7 +21,7 @@ import (
 )
 
 type Book struct {
-	ID     int    `json:"id"`
+	ID     int64  `json:"id"`
 	Title  string `json:"title"`
 	Author string `json:"author"`
 }
@@ -257,30 +257,36 @@ func welcomeHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(res)
 }
 
-func getBookByIDHandler(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	idInt, err := strconv.Atoi(id)
-	if err != nil {
-		writeJSONError(w, http.StatusBadRequest, "invalid_id", "Invalid ID")
-		return
-	}
-	if idInt <= 0 {
-		writeJSONError(w, http.StatusBadRequest, "invalid_id", "Invalid ID")
-		return
-	}
-	for _, book := range books {
-		if book.ID == idInt {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-
-			res := SuccessResponse{
-				Data: book,
-			}
-			json.NewEncoder(w).Encode(res)
+func getBookByIDHandler(store BookStore) http.HandlerFunc {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		idInt, err := strconv.ParseInt(id, 10, 64)
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, "invalid_id", "Invalid ID")
 			return
 		}
-	}
-	writeJSONError(w, http.StatusNotFound, "book_not_found", "Request book not found")
+		if idInt <= 0 {
+			writeJSONError(w, http.StatusBadRequest, "invalid_id", "Invalid ID")
+			return
+		}
+		book, err := store.GetBookByID(r.Context(), idInt)
+		if errors.Is(err, sql.ErrNoRows) {
+			writeJSONError(w, http.StatusNotFound, "book_not_found", "Request book not found")
+			return
+		}
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "internal_error", "Internal server error")
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+
+		res := SuccessResponse{
+			Data: book,
+		}
+		json.NewEncoder(w).Encode(res)
+	})
 }
 
 func updateBookHandler(w http.ResponseWriter, r *http.Request) {
@@ -297,7 +303,7 @@ func updateBookHandler(w http.ResponseWriter, r *http.Request) {
 	limitRequestBody(w, r)
 
 	id := r.PathValue("id")
-	idInt, err := strconv.Atoi(id)
+	idInt, err := strconv.ParseInt(id, 10, 64)
 	if err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid_id", "Invalid ID")
 		return
@@ -374,7 +380,7 @@ func updateBookHandler(w http.ResponseWriter, r *http.Request) {
 
 func deleteBookHandler(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	idInt, err := strconv.Atoi(id)
+	idInt, err := strconv.ParseInt(id, 10, 64)
 	if err != nil || idInt <= 0 {
 		writeJSONError(w, http.StatusBadRequest, "invalid_id", "Invalid ID")
 		return
@@ -452,8 +458,8 @@ func createBookHandler(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(res)
 }
 
-func nextID(books []Book) int {
-	maxID := 0
+func nextID(books []Book) int64 {
+	var maxID int64 = 0
 	for _, v := range books {
 		if v.ID > maxID {
 			maxID = v.ID
@@ -462,12 +468,12 @@ func nextID(books []Book) int {
 	return maxID + 1
 }
 
-func newMux() *http.ServeMux {
+func newMux(store BookStore) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", healthHandler)
 	mux.HandleFunc("GET /welcome", welcomeHandler)
 	mux.HandleFunc("GET /books", bookHandler)
-	mux.HandleFunc("GET /books/{id}", getBookByIDHandler)
+	mux.HandleFunc("GET /books/{id}", getBookByIDHandler(store))
 	mux.HandleFunc("POST /books", createBookHandler)
 	mux.HandleFunc("PATCH /books/{id}", updateBookHandler)
 	mux.HandleFunc("DELETE /books/{id}", deleteBookHandler)
@@ -498,7 +504,8 @@ func main() {
 		log.Fatal(pingErr)
 	}
 
-	mux := newMux()
+	store := NewPostgresBookStore(db)
+	mux := newMux(store)
 
 	fmt.Println("Listening on port 8080")
 	err = http.ListenAndServe(":8080", mux)
