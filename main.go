@@ -539,8 +539,16 @@ func run(logger *slog.Logger) error {
 	requestLogger := requestLoggingMiddleware(logger)
 	handler := requestLogger(mux)
 
+	server := &http.Server{
+		Addr:              ":" + strconv.Itoa(cfg.Port),
+		Handler:           handler,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      10 * time.Second,
+		IdleTimeout:       time.Minute,
+	}
 	logger.Info("server starting", "port", cfg.Port)
-	err = http.ListenAndServe(":"+strconv.Itoa(cfg.Port), handler)
+	err = server.ListenAndServe()
 	if err != nil {
 		return fmt.Errorf("server failed: %w", err)
 	}
