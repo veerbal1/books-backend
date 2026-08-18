@@ -11,8 +11,10 @@ import (
 	"mime"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -216,6 +218,24 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 		Data: map[string]string{"status": "ok"},
 	}
 	json.NewEncoder(w).Encode(res)
+}
+
+func readinessHandler(db *sql.DB) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+		defer cancel()
+
+		if err := db.PingContext(ctx); err != nil {
+			writeJSONError(w, http.StatusServiceUnavailable, "not_ready", "Service not ready")
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(SuccessResponse{
+			Data: map[string]string{"status": "ready"},
+		})
+	}
 }
 
 func welcomeHandler(w http.ResponseWriter, r *http.Request) {
@@ -536,6 +556,7 @@ func run(logger *slog.Logger) error {
 
 	store := NewPostgresBookStore(db)
 	mux := newMux(store)
+	mux.HandleFunc("GET /ready", readinessHandler(db))
 	requestLogger := requestLoggingMiddleware(logger)
 	handler := requestLogger(mux)
 
@@ -547,12 +568,35 @@ func run(logger *slog.Logger) error {
 		WriteTimeout:      10 * time.Second,
 		IdleTimeout:       time.Minute,
 	}
+
+	shutdownSignalCtx, stop := signal.NotifyContext(
+		context.Background(),
+		os.Interrupt,
+		syscall.SIGTERM,
+	)
+	defer stop()
+	serverErr := make(chan error, 1)
 	logger.Info("server starting", "port", cfg.Port)
-	err = server.ListenAndServe()
-	if err != nil {
-		return fmt.Errorf("server failed: %w", err)
+
+	go func() {
+		serverErr <- server.ListenAndServe()
+	}()
+
+	select {
+	case err := <-serverErr:
+		if !errors.Is(err, http.ErrServerClosed) {
+			return fmt.Errorf("server failed: %w", err)
+		}
+		return nil
+
+	case <-shutdownSignalCtx.Done():
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			return fmt.Errorf("shutdown server: %w", err)
+		}
+		return nil
 	}
-	return nil
 }
 
 func main() {
