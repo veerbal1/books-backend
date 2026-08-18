@@ -1,21 +1,47 @@
 # Book API
 
-A REST-style Book CRUD API built with Go's standard library. It keeps books in memory and focuses on predictable HTTP contracts: JSON response envelopes, structured handler errors, pagination, filtering, sorting, and request-body validation.
+A REST-style Book CRUD API built with Go and PostgreSQL. It provides predictable HTTP contracts, JSON response envelopes, structured handler errors, pagination, filtering, sorting, request-body validation, and persistent storage.
 
 ## Tech
 
 - Go
 - `net/http`
 - `encoding/json`
+- PostgreSQL with `database/sql` and pgx
+- Goose migrations
 - OpenAPI 3.1 (`openapi.yaml`)
 
 ## Run locally
 
+Copy `.env.example` to `.env`, provide a development `DATABASE_URL`, then apply the migrations:
+
 ```bash
+set -a; source .env; set +a
+GOOSE_DRIVER=postgres GOOSE_DBSTRING="$DATABASE_URL" GOOSE_MIGRATION_DIR=migrations goose up
 go run .
 ```
 
 The API listens at `http://localhost:8080`.
+
+Books persist across server restarts. The v1 API exposes the position-1 database author as its singular `author` field.
+
+## Testing
+
+Unit tests use a fake store and do not need PostgreSQL:
+
+```bash
+go test ./...
+```
+
+The PostgreSQL integration test requires a separate `TEST_DATABASE_URL`. Apply the migrations to that database first, then run:
+
+```bash
+set -a; source .env; set +a
+GOOSE_DRIVER=postgres GOOSE_DBSTRING="$TEST_DATABASE_URL" GOOSE_MIGRATION_DIR=migrations goose up
+TEST_DATABASE_URL="$TEST_DATABASE_URL" go test ./...
+```
+
+The integration test truncates only the test database before and after its CRUD scenario.
 
 ## API endpoints
 
@@ -135,7 +161,6 @@ The standard-library router owns unknown-route `404` and unsupported-method `405
 
 ## Current limitations
 
-- Books are stored only in memory and disappear when the server restarts.
-- No authentication, authorization, database, or persistence yet.
+- No authentication or authorization.
 - No idempotency-key support for retried create requests.
 - No Swagger UI is hosted yet; `openapi.yaml` is ready for one.

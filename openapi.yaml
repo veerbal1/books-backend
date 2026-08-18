@@ -5,7 +5,7 @@ info:
   title: Book API
   version: 1.0.0
   description: |
-    An in-memory Book CRUD API. Data resets when the server restarts.
+    A PostgreSQL-backed Book CRUD API. Data persists across server restarts.
     JSON body endpoints require application/json (parameters such as charset=utf-8 are accepted)
     and limit request bodies to 64 KiB.
 
