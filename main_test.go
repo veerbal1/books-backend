@@ -15,6 +15,7 @@ type fakeBookStore struct {
 	listResult ListResult
 	listCall   *listCall
 	updateCall *updateCall
+	deleteCall *deleteCall
 	err        error
 }
 
@@ -28,6 +29,11 @@ type updateCall struct {
 	id     int64
 	title  *string
 	author *string
+}
+
+type deleteCall struct {
+	called bool
+	id     int64
 }
 
 func (f fakeBookStore) GetBookByID(
@@ -64,6 +70,14 @@ func (f fakeBookStore) UpdateBook(
 		f.updateCall.author = cloneString(author)
 	}
 	return f.book, f.err
+}
+
+func (f fakeBookStore) DeleteBook(ctx context.Context, id int64) error {
+	if f.deleteCall != nil {
+		f.deleteCall.called = true
+		f.deleteCall.id = id
+	}
+	return f.err
 }
 
 func cloneString(value *string) *string {
@@ -371,4 +385,43 @@ func TestUpdateBookHandlerMissingBook(t *testing.T) {
 	if body.Error.Code != "book_not_found" {
 		t.Fatalf("error code = %q, want %q", body.Error.Code, "book_not_found")
 	}
+}
+
+func TestDeleteBookHandler(t *testing.T) {
+	t.Run("deletes a book", func(t *testing.T) {
+		call := &deleteCall{}
+		mux := newMux(fakeBookStore{deleteCall: call})
+		req := httptest.NewRequest(http.MethodDelete, "/books/7", nil)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("status = %d, want %d", rec.Code, http.StatusNoContent)
+		}
+		if rec.Body.Len() != 0 {
+			t.Fatalf("body = %q, want empty", rec.Body.String())
+		}
+		if !call.called || call.id != 7 {
+			t.Fatalf("DeleteBook call = %#v, want ID 7", call)
+		}
+	})
+
+	t.Run("returns not found", func(t *testing.T) {
+		mux := newMux(fakeBookStore{err: sql.ErrNoRows})
+		req := httptest.NewRequest(http.MethodDelete, "/books/999", nil)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusNotFound {
+			t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotFound)
+		}
+
+		var body ErrorResponse
+		if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+			t.Fatalf("failed to decode response: %v", err)
+		}
+		if body.Error.Code != "book_not_found" {
+			t.Fatalf("error code = %q, want %q", body.Error.Code, "book_not_found")
+		}
+	})
 }

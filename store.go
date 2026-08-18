@@ -19,6 +19,7 @@ type BookStore interface {
 	ListBooks(ctx context.Context, options ListOptions) (ListResult, error)
 	CreateBook(ctx context.Context, title string, author string) (Book, error)
 	UpdateBook(ctx context.Context, id int64, title, author *string) (Book, error)
+	DeleteBook(ctx context.Context, id int64) error
 }
 
 type ListOptions struct {
@@ -216,6 +217,15 @@ func (s *PostgresBookStore) UpdateBook(
 	}
 
 	return book, nil
+}
+
+func (s *PostgresBookStore) DeleteBook(ctx context.Context, id int64) error {
+	var deletedID int64
+	return s.db.QueryRowContext(
+		ctx,
+		`DELETE FROM books WHERE id = $1 RETURNING id`,
+		id,
+	).Scan(&deletedID)
 }
 
 func listBooksOrderBy(sortField, order string) (string, error) {

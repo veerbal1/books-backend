@@ -348,23 +348,27 @@ func updateBookHandler(store BookStore) http.HandlerFunc {
 	}
 }
 
-func deleteBookHandler(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	idInt, err := strconv.ParseInt(id, 10, 64)
-	if err != nil || idInt <= 0 {
-		writeJSONError(w, http.StatusBadRequest, "invalid_id", "Invalid ID")
-		return
-	}
-
-	for index, book := range books {
-		if book.ID == idInt {
-			books = append(books[:index], books[index+1:]...)
-			w.WriteHeader(http.StatusNoContent)
+func deleteBookHandler(store BookStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		idInt, err := strconv.ParseInt(id, 10, 64)
+		if err != nil || idInt <= 0 {
+			writeJSONError(w, http.StatusBadRequest, "invalid_id", "Invalid ID")
 			return
 		}
-	}
 
-	writeJSONError(w, http.StatusNotFound, "book_not_found", "Request book not found")
+		err = store.DeleteBook(r.Context(), idInt)
+		if errors.Is(err, sql.ErrNoRows) {
+			writeJSONError(w, http.StatusNotFound, "book_not_found", "Request book not found")
+			return
+		}
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "internal_error", "Internal server error")
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+	}
 }
 
 func isJSONContentType(r *http.Request) bool {
@@ -445,7 +449,7 @@ func newMux(store BookStore) *http.ServeMux {
 	mux.HandleFunc("GET /books/{id}", getBookByIDHandler(store))
 	mux.HandleFunc("POST /books", createBookHandler(store))
 	mux.HandleFunc("PATCH /books/{id}", updateBookHandler(store))
-	mux.HandleFunc("DELETE /books/{id}", deleteBookHandler)
+	mux.HandleFunc("DELETE /books/{id}", deleteBookHandler(store))
 	return mux
 }
 
