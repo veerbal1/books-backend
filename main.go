@@ -11,7 +11,6 @@ import (
 	"mime"
 	"net/http"
 	"os"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -136,100 +135,72 @@ func parseSort(r *http.Request) (string, string, error) {
 	return sortField, order, nil
 }
 
-func bookHandler(w http.ResponseWriter, r *http.Request) {
-	author := r.URL.Query().Get("author")
-	title := r.URL.Query().Get("title")
-	limit, offset, err := parsePagination(r)
+func bookHandler(store BookStore) http.HandlerFunc {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		author := r.URL.Query().Get("author")
+		title := r.URL.Query().Get("title")
+		limit, offset, err := parsePagination(r)
 
-	if err != nil {
-		writeJSONError(
-			w,
-			http.StatusBadRequest,
-			"invalid_request",
-			"Invalid pagination",
-		)
-		return
-	}
-
-	sortField, order, err := parseSort(r)
-	if err != nil {
-		writeJSONError(
-			w,
-			http.StatusBadRequest,
-			"invalid_request",
-			"Invalid sorting",
-		)
-		return
-	}
-
-	result := []Book{}
-	for _, book := range books {
-		matchesAuthor := author == "" || strings.EqualFold(book.Author, author)
-		matchesTitle := title == "" ||
-			strings.Contains(strings.ToLower(book.Title), strings.ToLower(title))
-		if matchesAuthor && matchesTitle {
-			result = append(result, book)
-		}
-	}
-
-	sort.Slice(result, func(i, j int) bool {
-		left := result[i]
-		right := result[j]
-
-		if sortField == "id" {
-			if order == "asc" {
-				return left.ID < right.ID
-			}
-			return left.ID > right.ID
+		if err != nil {
+			writeJSONError(
+				w,
+				http.StatusBadRequest,
+				"invalid_request",
+				"Invalid pagination",
+			)
+			return
 		}
 
-		leftValue := left.Title
-		rightValue := right.Title
-
-		if sortField == "author" {
-			leftValue = left.Author
-			rightValue = right.Author
+		sortField, order, err := parseSort(r)
+		if err != nil {
+			writeJSONError(
+				w,
+				http.StatusBadRequest,
+				"invalid_request",
+				"Invalid sorting",
+			)
+			return
 		}
 
-		leftValue = strings.ToLower(leftValue)
-		rightValue = strings.ToLower(rightValue)
-
-		if leftValue == rightValue {
-			return left.ID < right.ID
+		listResult, err := store.ListBooks(r.Context(), ListOptions{
+			Author:    author,
+			Title:     title,
+			SortField: sortField,
+			Order:     order,
+			Limit:     limit,
+			Offset:    offset,
+		})
+		if err != nil {
+			writeJSONError(
+				w,
+				http.StatusInternalServerError,
+				"internal_error",
+				"Internal server error",
+			)
+			return
 		}
 
-		if order == "asc" {
-			return leftValue < rightValue
+		books := listResult.Books
+		if books == nil {
+			books = []Book{}
 		}
-		return leftValue > rightValue
+
+		hasMore := offset+len(books) < listResult.Total
+
+		res := ListResponse{
+			Data: books,
+			Pagination: Pagination{
+				Limit:   limit,
+				Offset:  offset,
+				Total:   listResult.Total,
+				HasMore: hasMore,
+			},
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		json.NewEncoder(w).Encode(res)
 	})
-
-	total := len(result)
-
-	page := []Book{}
-	if offset < total {
-		end := offset + limit
-		if end > total {
-			end = total
-		}
-		page = result[offset:end]
-	}
-
-	hasMore := offset+len(page) < total
-
-	res := ListResponse{
-		Data: page,
-		Pagination: Pagination{
-			Limit:   limit,
-			Offset:  offset,
-			Total:   total,
-			HasMore: hasMore,
-		},
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(res)
 }
 
 func writeJSONError(w http.ResponseWriter, status int, code string, message string) {
@@ -407,74 +378,73 @@ func isJSONContentType(r *http.Request) bool {
 	return mediaType == "application/json"
 }
 
-func createBookHandler(w http.ResponseWriter, r *http.Request) {
-	if !isJSONContentType(r) {
-		writeJSONError(
-			w,
-			http.StatusUnsupportedMediaType,
-			"unsupported_media_type",
-			"Content-Type must be application/json",
-		)
-		return
-	}
-	limitRequestBody(w, r)
-
-	var input CreateBookInput
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-	err := decoder.Decode(&input)
-	if err != nil {
-		if isBodyTooLarge(err) {
+func createBookHandler(store BookStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !isJSONContentType(r) {
 			writeJSONError(
 				w,
-				http.StatusRequestEntityTooLarge,
-				"body_too_large",
-				"Request body is too large",
+				http.StatusUnsupportedMediaType,
+				"unsupported_media_type",
+				"Content-Type must be application/json",
 			)
 			return
 		}
-		writeJSONError(w, http.StatusBadRequest, "invalid_request", "Invalid request")
-		return
-	}
-	var extra any
-	if err := decoder.Decode(&extra); err != io.EOF {
-		writeJSONError(w, http.StatusBadRequest, "invalid_request", "Invalid request")
-		return
-	}
+		limitRequestBody(w, r)
 
-	if strings.TrimSpace(input.Author) == "" || strings.TrimSpace(input.Title) == "" {
-		writeJSONError(w, http.StatusBadRequest, "invalid_values", "Invalid values")
-		return
-	}
-
-	newBook := Book{ID: nextID(books), Title: input.Title, Author: input.Author}
-
-	books = append(books, newBook)
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	res := SuccessResponse{
-		Data: newBook,
-	}
-	json.NewEncoder(w).Encode(res)
-}
-
-func nextID(books []Book) int64 {
-	var maxID int64 = 0
-	for _, v := range books {
-		if v.ID > maxID {
-			maxID = v.ID
+		var input CreateBookInput
+		decoder := json.NewDecoder(r.Body)
+		decoder.DisallowUnknownFields()
+		err := decoder.Decode(&input)
+		if err != nil {
+			if isBodyTooLarge(err) {
+				writeJSONError(
+					w,
+					http.StatusRequestEntityTooLarge,
+					"body_too_large",
+					"Request body is too large",
+				)
+				return
+			}
+			writeJSONError(w, http.StatusBadRequest, "invalid_request", "Invalid request")
+			return
 		}
+		var extra any
+		if err := decoder.Decode(&extra); err != io.EOF {
+			writeJSONError(w, http.StatusBadRequest, "invalid_request", "Invalid request")
+			return
+		}
+
+		if strings.TrimSpace(input.Author) == "" || strings.TrimSpace(input.Title) == "" {
+			writeJSONError(w, http.StatusBadRequest, "invalid_values", "Invalid values")
+			return
+		}
+
+		newBook, err := store.CreateBook(r.Context(), input.Title, input.Author)
+		if err != nil {
+			writeJSONError(
+				w,
+				http.StatusInternalServerError,
+				"internal_error",
+				"Internal server error",
+			)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		res := SuccessResponse{
+			Data: newBook,
+		}
+		json.NewEncoder(w).Encode(res)
 	}
-	return maxID + 1
 }
 
 func newMux(store BookStore) *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", healthHandler)
 	mux.HandleFunc("GET /welcome", welcomeHandler)
-	mux.HandleFunc("GET /books", bookHandler)
+	mux.HandleFunc("GET /books", bookHandler(store))
 	mux.HandleFunc("GET /books/{id}", getBookByIDHandler(store))
-	mux.HandleFunc("POST /books", createBookHandler)
+	mux.HandleFunc("POST /books", createBookHandler(store))
 	mux.HandleFunc("PATCH /books/{id}", updateBookHandler)
 	mux.HandleFunc("DELETE /books/{id}", deleteBookHandler)
 	return mux
