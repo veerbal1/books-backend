@@ -10,13 +10,11 @@ import (
 	"log"
 	"mime"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
-	"github.com/joho/godotenv"
 )
 
 type Book struct {
@@ -454,13 +452,12 @@ func newMux(store BookStore) *http.ServeMux {
 }
 
 func main() {
-	godotenv.Load()
-	dbURL := os.Getenv("DATABASE_URL")
-	if dbURL == "" {
-		log.Fatal("DATABASE_URL is required")
+	cfg, err := loadConfig()
+	if err != nil {
+		log.Fatal(err)
 	}
 
-	db, err := sql.Open("pgx", dbURL)
+	db, err := sql.Open("pgx", cfg.DatabaseURL)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -480,8 +477,8 @@ func main() {
 	store := NewPostgresBookStore(db)
 	mux := newMux(store)
 
-	fmt.Println("Listening on port 8080")
-	err = http.ListenAndServe(":8080", mux)
+	fmt.Printf("Listening on port :%v\n", cfg.Port)
+	err = http.ListenAndServe(":"+strconv.Itoa(cfg.Port), mux)
 	if err != nil {
 		log.Fatal(err)
 	}
