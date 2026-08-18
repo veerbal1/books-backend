@@ -170,6 +170,7 @@ func bookHandler(store BookStore) http.HandlerFunc {
 			Offset:    offset,
 		})
 		if err != nil {
+			slog.Error("list books failed", "error", err)
 			writeJSONError(
 				w,
 				http.StatusInternalServerError,
@@ -245,6 +246,7 @@ func getBookByIDHandler(store BookStore) http.HandlerFunc {
 			return
 		}
 		if err != nil {
+			slog.Error("get book failed", "book_id", idInt, "error", err)
 			writeJSONError(w, http.StatusInternalServerError, "internal_error", "Internal server error")
 			return
 		}
@@ -335,6 +337,7 @@ func updateBookHandler(store BookStore) http.HandlerFunc {
 			return
 		}
 		if err != nil {
+			slog.Error("update book failed", "book_id", idInt, "error", err)
 			writeJSONError(w, http.StatusInternalServerError, "internal_error", "Internal server error")
 			return
 		}
@@ -362,6 +365,7 @@ func deleteBookHandler(store BookStore) http.HandlerFunc {
 			return
 		}
 		if err != nil {
+			slog.Error("delete book failed", "book_id", idInt, "error", err)
 			writeJSONError(w, http.StatusInternalServerError, "internal_error", "Internal server error")
 			return
 		}
@@ -423,6 +427,7 @@ func createBookHandler(store BookStore) http.HandlerFunc {
 
 		newBook, err := store.CreateBook(r.Context(), input.Title, input.Author)
 		if err != nil {
+			slog.Error("create book failed", "error", err)
 			writeJSONError(
 				w,
 				http.StatusInternalServerError,
@@ -544,6 +549,7 @@ func run(logger *slog.Logger) error {
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	slog.SetDefault(logger)
 	if err := run(logger); err != nil {
 		logger.Error("application stopped", "error", err)
 		os.Exit(1)
