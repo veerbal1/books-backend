@@ -7,9 +7,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"mime"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -451,15 +452,69 @@ func newMux(store BookStore) *http.ServeMux {
 	return mux
 }
 
-func main() {
+type statusRecorder struct {
+	http.ResponseWriter
+	status      int
+	wroteHeader bool
+}
+
+func (rec *statusRecorder) WriteHeader(status int) {
+	if rec.wroteHeader {
+		return
+	}
+
+	rec.status = status
+	rec.wroteHeader = true
+	rec.ResponseWriter.WriteHeader(status)
+}
+
+func (rec *statusRecorder) Write(body []byte) (int, error) {
+	if !rec.wroteHeader {
+		rec.WriteHeader(http.StatusOK)
+	}
+
+	return rec.ResponseWriter.Write(body)
+}
+
+func requestLoggingMiddleware(logger *slog.Logger) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			started := time.Now()
+			recorder := &statusRecorder{
+				ResponseWriter: w,
+				status:         http.StatusOK,
+			}
+
+			next.ServeHTTP(recorder, r)
+
+			attributes := []any{
+				"method", r.Method,
+				"path", r.URL.Path,
+				"status", recorder.status,
+				"duration_ms", time.Since(started).Milliseconds(),
+			}
+
+			switch {
+			case recorder.status >= http.StatusInternalServerError:
+				logger.Error("request completed", attributes...)
+			case recorder.status >= http.StatusBadRequest:
+				logger.Warn("request completed", attributes...)
+			default:
+				logger.Info("request completed", attributes...)
+			}
+		})
+	}
+}
+
+func run(logger *slog.Logger) error {
 	cfg, err := loadConfig()
 	if err != nil {
-		log.Fatal(err)
+		return fmt.Errorf("failed to load config: %w", err)
 	}
 
 	db, err := sql.Open("pgx", cfg.DatabaseURL)
 	if err != nil {
-		log.Fatal(err)
+		return fmt.Errorf("failed to open database connection: %w", err)
 	}
 	defer db.Close()
 	db.SetMaxOpenConns(10)
@@ -471,15 +526,26 @@ func main() {
 	cancel()
 
 	if pingErr != nil {
-		log.Fatal(pingErr)
+		return fmt.Errorf("failed to ping database: %w", pingErr)
 	}
 
 	store := NewPostgresBookStore(db)
 	mux := newMux(store)
+	requestLogger := requestLoggingMiddleware(logger)
+	handler := requestLogger(mux)
 
-	fmt.Printf("Listening on port :%v\n", cfg.Port)
-	err = http.ListenAndServe(":"+strconv.Itoa(cfg.Port), mux)
+	logger.Info("server starting", "port", cfg.Port)
+	err = http.ListenAndServe(":"+strconv.Itoa(cfg.Port), handler)
 	if err != nil {
-		log.Fatal(err)
+		return fmt.Errorf("server failed: %w", err)
+	}
+	return nil
+}
+
+func main() {
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	if err := run(logger); err != nil {
+		logger.Error("application stopped", "error", err)
+		os.Exit(1)
 	}
 }
