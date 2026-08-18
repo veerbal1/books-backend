@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -13,12 +14,20 @@ type fakeBookStore struct {
 	book       Book
 	listResult ListResult
 	listCall   *listCall
+	updateCall *updateCall
 	err        error
 }
 
 type listCall struct {
 	called  bool
 	options ListOptions
+}
+
+type updateCall struct {
+	called bool
+	id     int64
+	title  *string
+	author *string
 }
 
 func (f fakeBookStore) GetBookByID(
@@ -41,6 +50,28 @@ func (f fakeBookStore) CreateBook(
 	title, author string,
 ) (Book, error) {
 	return f.book, f.err
+}
+
+func (f fakeBookStore) UpdateBook(
+	ctx context.Context,
+	id int64,
+	title, author *string,
+) (Book, error) {
+	if f.updateCall != nil {
+		f.updateCall.called = true
+		f.updateCall.id = id
+		f.updateCall.title = cloneString(title)
+		f.updateCall.author = cloneString(author)
+	}
+	return f.book, f.err
+}
+
+func cloneString(value *string) *string {
+	if value == nil {
+		return nil
+	}
+	copy := *value
+	return &copy
 }
 
 func resetBooks(t *testing.T) {
@@ -243,5 +274,101 @@ func TestListBooksOrderBy(t *testing.T) {
 				t.Fatalf("order clause = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestUpdateBookHandlerPassesPartialInput(t *testing.T) {
+	cases := []struct {
+		name          string
+		body          string
+		wantTitle     string
+		wantHasTitle  bool
+		wantAuthor    string
+		wantHasAuthor bool
+		returnedBook  Book
+	}{
+		{
+			name:         "title only",
+			body:         `{"title":"New Title"}`,
+			wantTitle:    "New Title",
+			wantHasTitle: true,
+			returnedBook: Book{ID: 1, Title: "New Title", Author: "Original Author"},
+		},
+		{
+			name:          "author only",
+			body:          `{"author":"New Author"}`,
+			wantAuthor:    "New Author",
+			wantHasAuthor: true,
+			returnedBook:  Book{ID: 1, Title: "Original Title", Author: "New Author"},
+		},
+		{
+			name:          "title and author",
+			body:          `{"title":"New Title","author":"New Author"}`,
+			wantTitle:     "New Title",
+			wantHasTitle:  true,
+			wantAuthor:    "New Author",
+			wantHasAuthor: true,
+			returnedBook:  Book{ID: 1, Title: "New Title", Author: "New Author"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			call := &updateCall{}
+			mux := newMux(fakeBookStore{book: tc.returnedBook, updateCall: call})
+			req := httptest.NewRequest(http.MethodPatch, "/books/1", strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+			}
+			if !call.called || call.id != 1 {
+				t.Fatalf("UpdateBook call = %#v, want ID 1", call)
+			}
+			if (call.title != nil) != tc.wantHasTitle {
+				t.Fatalf("title supplied = %t, want %t", call.title != nil, tc.wantHasTitle)
+			}
+			if call.title != nil && *call.title != tc.wantTitle {
+				t.Fatalf("title = %q, want %q", *call.title, tc.wantTitle)
+			}
+			if (call.author != nil) != tc.wantHasAuthor {
+				t.Fatalf("author supplied = %t, want %t", call.author != nil, tc.wantHasAuthor)
+			}
+			if call.author != nil && *call.author != tc.wantAuthor {
+				t.Fatalf("author = %q, want %q", *call.author, tc.wantAuthor)
+			}
+
+			var response struct {
+				Data Book `json:"data"`
+			}
+			if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+				t.Fatalf("failed to decode response: %v", err)
+			}
+			if response.Data != tc.returnedBook {
+				t.Fatalf("response book = %#v, want %#v", response.Data, tc.returnedBook)
+			}
+		})
+	}
+}
+
+func TestUpdateBookHandlerMissingBook(t *testing.T) {
+	mux := newMux(fakeBookStore{err: sql.ErrNoRows})
+	req := httptest.NewRequest(http.MethodPatch, "/books/999", strings.NewReader(`{"title":"New Title"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNotFound)
+	}
+
+	var body ErrorResponse
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+	if body.Error.Code != "book_not_found" {
+		t.Fatalf("error code = %q, want %q", body.Error.Code, "book_not_found")
 	}
 }

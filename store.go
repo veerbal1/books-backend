@@ -18,6 +18,7 @@ type BookStore interface {
 	GetBookByID(ctx context.Context, id int64) (Book, error)
 	ListBooks(ctx context.Context, options ListOptions) (ListResult, error)
 	CreateBook(ctx context.Context, title string, author string) (Book, error)
+	UpdateBook(ctx context.Context, id int64, title, author *string) (Book, error)
 }
 
 type ListOptions struct {
@@ -135,6 +136,86 @@ func (s *PostgresBookStore) CreateBook(ctx context.Context, title string, author
 	}
 
 	return Book{ID: bookID, Title: title, Author: author}, nil
+}
+
+func (s *PostgresBookStore) UpdateBook(
+	ctx context.Context,
+	id int64,
+	title, author *string,
+) (Book, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Book{}, err
+	}
+	defer tx.Rollback()
+
+	var lockedBookID int64
+	if err := tx.QueryRowContext(
+		ctx,
+		`SELECT id FROM books WHERE id = $1 FOR UPDATE`,
+		id,
+	).Scan(&lockedBookID); err != nil {
+		return Book{}, err
+	}
+
+	if title != nil {
+		if _, err := tx.ExecContext(
+			ctx,
+			`UPDATE books SET title = $1 WHERE id = $2`,
+			*title,
+			id,
+		); err != nil {
+			return Book{}, err
+		}
+	}
+
+	if author != nil {
+		var authorID int64
+		if err := tx.QueryRowContext(
+			ctx,
+			`INSERT INTO authors (name) VALUES ($1) RETURNING id`,
+			*author,
+		).Scan(&authorID); err != nil {
+			return Book{}, err
+		}
+
+		if _, err := tx.ExecContext(
+			ctx,
+			`DELETE FROM book_authors WHERE book_id = $1`,
+			id,
+		); err != nil {
+			return Book{}, err
+		}
+
+		if _, err := tx.ExecContext(
+			ctx,
+			`INSERT INTO book_authors (book_id, author_id, position) VALUES ($1, $2, 1)`,
+			id,
+			authorID,
+		); err != nil {
+			return Book{}, err
+		}
+	}
+
+	var book Book
+	if err := tx.QueryRowContext(ctx, `
+		SELECT b.id, b.title, a.name
+		FROM books AS b
+		JOIN book_authors AS ba ON ba.book_id = b.id
+		JOIN authors AS a ON a.id = ba.author_id
+		WHERE b.id = $1 AND ba.position = 1`, id).Scan(
+		&book.ID,
+		&book.Title,
+		&book.Author,
+	); err != nil {
+		return Book{}, err
+	}
+
+	if err := tx.Commit(); err != nil {
+		return Book{}, err
+	}
+
+	return book, nil
 }
 
 func listBooksOrderBy(sortField, order string) (string, error) {

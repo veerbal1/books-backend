@@ -260,93 +260,92 @@ func getBookByIDHandler(store BookStore) http.HandlerFunc {
 	})
 }
 
-func updateBookHandler(w http.ResponseWriter, r *http.Request) {
-	if !isJSONContentType(r) {
-		writeJSONError(
-			w,
-			http.StatusUnsupportedMediaType,
-			"unsupported_media_type",
-			"Content-Type must be application/json",
-		)
-		return
-	}
-
-	limitRequestBody(w, r)
-
-	id := r.PathValue("id")
-	idInt, err := strconv.ParseInt(id, 10, 64)
-	if err != nil {
-		writeJSONError(w, http.StatusBadRequest, "invalid_id", "Invalid ID")
-		return
-	}
-	if idInt <= 0 {
-		writeJSONError(w, http.StatusBadRequest, "invalid_id", "Invalid ID")
-		return
-	}
-	for index, book := range books {
-		if book.ID == idInt {
-			var input UpdateBookInput
-			decoder := json.NewDecoder(r.Body)
-			decoder.DisallowUnknownFields()
-			err = decoder.Decode(&input)
-			if err != nil {
-				if isBodyTooLarge(err) {
-					writeJSONError(
-						w,
-						http.StatusRequestEntityTooLarge,
-						"body_too_large",
-						"Request body is too large",
-					)
-					return
-				}
-				writeJSONError(w, http.StatusBadRequest, "invalid_request", "Invalid request")
-				return
-			}
-			var extra any
-			if err := decoder.Decode(&extra); err != io.EOF {
-				writeJSONError(w, http.StatusBadRequest, "invalid_request", "Invalid request")
-				return
-			}
-
-			if input.Title != nil {
-				trimmed := strings.TrimSpace(*input.Title)
-				if trimmed == "" {
-					writeJSONError(w, http.StatusBadRequest, "invalid_values", "Invalid values")
-					return
-				}
-				*input.Title = trimmed
-			}
-			if input.Author != nil {
-				trimmed := strings.TrimSpace(*input.Author)
-				if trimmed == "" {
-					writeJSONError(w, http.StatusBadRequest, "invalid_values", "Invalid values")
-					return
-				}
-				*input.Author = trimmed
-			}
-			if input.Title == nil && input.Author == nil {
-				writeJSONError(w, http.StatusBadRequest, "invalid_request", "Invalid request")
-				return
-			}
-
-			if input.Title != nil {
-				books[index].Title = *input.Title
-			}
-			if input.Author != nil {
-				books[index].Author = *input.Author
-			}
-
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusOK)
-
-			res := SuccessResponse{
-				Data: books[index],
-			}
-			json.NewEncoder(w).Encode(res)
+func updateBookHandler(store BookStore) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !isJSONContentType(r) {
+			writeJSONError(
+				w,
+				http.StatusUnsupportedMediaType,
+				"unsupported_media_type",
+				"Content-Type must be application/json",
+			)
 			return
 		}
+
+		limitRequestBody(w, r)
+
+		id := r.PathValue("id")
+		idInt, err := strconv.ParseInt(id, 10, 64)
+		if err != nil {
+			writeJSONError(w, http.StatusBadRequest, "invalid_id", "Invalid ID")
+			return
+		}
+		if idInt <= 0 {
+			writeJSONError(w, http.StatusBadRequest, "invalid_id", "Invalid ID")
+			return
+		}
+
+		var input UpdateBookInput
+		decoder := json.NewDecoder(r.Body)
+		decoder.DisallowUnknownFields()
+		err = decoder.Decode(&input)
+		if err != nil {
+			if isBodyTooLarge(err) {
+				writeJSONError(
+					w,
+					http.StatusRequestEntityTooLarge,
+					"body_too_large",
+					"Request body is too large",
+				)
+				return
+			}
+			writeJSONError(w, http.StatusBadRequest, "invalid_request", "Invalid request")
+			return
+		}
+
+		var extra any
+		if err := decoder.Decode(&extra); err != io.EOF {
+			writeJSONError(w, http.StatusBadRequest, "invalid_request", "Invalid request")
+			return
+		}
+
+		if input.Title != nil {
+			trimmed := strings.TrimSpace(*input.Title)
+			if trimmed == "" {
+				writeJSONError(w, http.StatusBadRequest, "invalid_values", "Invalid values")
+				return
+			}
+			*input.Title = trimmed
+		}
+		if input.Author != nil {
+			trimmed := strings.TrimSpace(*input.Author)
+			if trimmed == "" {
+				writeJSONError(w, http.StatusBadRequest, "invalid_values", "Invalid values")
+				return
+			}
+			*input.Author = trimmed
+		}
+		if input.Title == nil && input.Author == nil {
+			writeJSONError(w, http.StatusBadRequest, "invalid_request", "Invalid request")
+			return
+		}
+
+		updatedBook, err := store.UpdateBook(r.Context(), idInt, input.Title, input.Author)
+		if errors.Is(err, sql.ErrNoRows) {
+			writeJSONError(w, http.StatusNotFound, "book_not_found", "Request book not found")
+			return
+		}
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "internal_error", "Internal server error")
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+
+		res := SuccessResponse{Data: updatedBook}
+		json.NewEncoder(w).Encode(res)
 	}
-	writeJSONError(w, http.StatusNotFound, "book_not_found", "Request book not found")
 }
 
 func deleteBookHandler(w http.ResponseWriter, r *http.Request) {
@@ -445,7 +444,7 @@ func newMux(store BookStore) *http.ServeMux {
 	mux.HandleFunc("GET /books", bookHandler(store))
 	mux.HandleFunc("GET /books/{id}", getBookByIDHandler(store))
 	mux.HandleFunc("POST /books", createBookHandler(store))
-	mux.HandleFunc("PATCH /books/{id}", updateBookHandler)
+	mux.HandleFunc("PATCH /books/{id}", updateBookHandler(store))
 	mux.HandleFunc("DELETE /books/{id}", deleteBookHandler)
 	return mux
 }
